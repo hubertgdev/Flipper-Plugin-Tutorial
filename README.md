@@ -33,6 +33,16 @@ touch flipperzero-firmware/applications/hello_world/hello_world.c
 ```
 
 
+## Includes
+First, add the following includes needed for this plugin:
+
+```c
+#include <furi.h>
+#include <gui/gui.h>
+#include <input/input.h>
+#include <stdlib.h>
+```
+
 ## Plugin Main 
 For flipper to activate the plugin, a main function for the plugin has to be added. Following the naming convention of existing flipper plugins, this needs to be: `hello_world_app`. 
 
@@ -50,11 +60,11 @@ The view_port is used to control the canvas (display) and userinput from the har
 
 ```c
 int32_t hello_world_app(void* p) { 
-    osMessageQueueId_t event_queue = osMessageQueueNew(8, sizeof(GameEvent), NULL); 
+    osMessageQueueId_t event_queue = osMessageQueueNew(8, sizeof(PluginEvent), NULL); 
  
     // Set system callbacks
     ViewPort* view_port = view_port_alloc(); 
-    view_port_draw_callback_set(view_port, render_callback, NULL);
+    view_port_draw_callback_set(view_port, render_callback, &state_mutex);
     view_port_input_callback_set(view_port, input_callback, event_queue);
  
     // Open GUI and register view_port
@@ -163,7 +173,7 @@ int32_t hello_world_app(void* p) {
     ValueMutex state_mutex; 
     if (!init_mutex(&state_mutex, plugin_state, sizeof(PluginState))) {
         FURI_LOG_E("Hello_World", "cannot create mutex\r\n");
-        free(game_state); 
+        free(plugin_state); 
         return 255;
     }
 
@@ -201,7 +211,7 @@ hello_world_state_init(plugin_state);
 ValueMutex state_mutex; 
 ...
 ```
-4. Aquire a blocking mutex after a new event is handled in the queue. Write values to the locked game_state object when user presses buttons. And release when we finish working with the state. 
+4. Aquire a blocking mutex after a new event is handled in the queue. Write values to the locked `plugin_state` object when user presses buttons. And release when we finish working with the state. 
 
 ```c
 PluginEvent event; 
@@ -265,53 +275,47 @@ static void render_callback(Canvas* const canvas, void* ctx) {
     canvas_draw_frame(canvas, 0, 0, 128, 64);
     
     canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str_aligned(canvas, plugin_state.x, plugin_state.y, AlignRight, AlignBottom, "Hello World");
+    canvas_draw_str_aligned(canvas, plugin_state->x, plugin_state->y, AlignRight, AlignBottom, "Hello World");
 
     release_mutex((ValueMutex*)ctx, plugin_state);
 }
 ``` 
 
+## Closing the plugin
+
+You must clear the resources of the plugin after the loop ends. Let's add the following lines at the end of the main function to ensure that these resources are freed correctly:
+
+```c
+PluginEvent evt;
+for(bool processing = true; processing;) {
+    /* ... */
+}
+
+view_port_enabled_set(view_port, false);
+gui_remove_view_port(gui, view_port);
+furi_record_close("gui");
+view_port_free(view_port);
+osMessageQueueDelete(event_queue);
+
+return 0;
+```
 
 ## Building the firmware + plugin
 
-Before the plugin is added to flipper. We have to let the compiler know, where to find the plugins files. 
-
-1. The application needs to be registered in the menu to be called. This is possible by adding two entries to `applications\applications.c`. 
-
-First entry is the refrence to the plugin's main function. Lets add it below the snake_game_app: 
-```c
-// Plugins
-extern int32_t music_player_app(void* p);
-extern int32_t snake_game_app(void* p);
-extern int32_t hello_world_app(void* p);
-``` 
-Next make sure we add it to the list of applications that is included in the menu:
+Before the plugin is added to flipper. We have to let the compiler know, where to find the plugins files. To do so, create an `application.fam` file in the plugin directory. This file is used to register the application and define its requirements. Let's add the following configuration:
 
 ```c
-#ifdef APP_HELLO_WORLD
-    {.app = hello_world_app, 
-    .name = "Hello World!", 
-    .stack_size = 1024, 
-    .icon = &A_Plugins_14,
-    .flags = FlipperApplicationFlagDefault},
-#endif
-```
-2. Let the compiler know we want to build these objects by adding it to `applications.mk` file. 
-
-Again lets add the entry below the Snake Game. 
-```mk
-APP_HELLO_WORLD ?= 0
-ifeq ($(APP_HELLO_WORLD), 1)
-CFLAGS		+= -DAPP_HELLO_WORLD
-SRV_GUI		= 1
-endif
+App(
+    appid="hello_world",
+    name="Hello World",
+    apptype=FlipperAppType.PLUGIN,
+    entry_point="hello_world_app",
+    cdefines=["APP_HELLO_WORLD"],
+    requires=["gui"],
+    stack_size=1 * 1024,
+    icon="A_Plugins_14",
+    order=40,
+)
 ```
 
-On the top of the document, lets set `APP_HELLO_WORLD` to 1!
-```mk
-APP_SNAKE_GAME = 1
-APP_HELLO_WORLD = 1
-...
-```
-
-Now you can build the application! 
+Now you can build the application! Follow the instructions from the [official firmware repository](https://github.com/flipperdevices/flipperzero-firmware#build-with-docker), to compile the sources and flash your *Flipper Zero* with your own firmware!
